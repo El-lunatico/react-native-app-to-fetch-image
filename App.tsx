@@ -1,118 +1,147 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+import React, { useState, useEffect } from 'react';
+import { Text, SafeAreaView, TextInput, View, Button, Image, Alert, FlatList, TouchableOpacity } from 'react-native';
+import SQLite from 'react-native-sqlite-storage';
 
-import React from 'react';
-import type {PropsWithChildren} from 'react';
-import {
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  useColorScheme,
-  View,
-} from 'react-native';
+// Open or create a SQLite database
+const db = SQLite.openDatabase(
+  {
+    name: 'urlHistory.db',
+    location: 'default',
+  },
+  () => { console.log('Database opened'); },
+  error => { console.log('Error opening database:', error); }
+);
 
-import {
-  Colors,
-  DebugInstructions,
-  Header,
-  LearnMoreLinks,
-  ReloadInstructions,
-} from 'react-native/Libraries/NewAppScreen';
+const ImageFetch = () => {
+  const [url, setURL] = useState<string>('');
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [urlHistory, setUrlHistory] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(false);
 
-type SectionProps = PropsWithChildren<{
-  title: string;
-}>;
+  useEffect(() => {
+    // Create a table to store URLs if it doesn't exist
+    db.transaction(tx => {
+      tx.executeSql(
+        'CREATE TABLE IF NOT EXISTS url_history (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT);',
+        [],
+        () => console.log('Table created or already exists'),
+        error => console.log('Error creating table:', error)
+      );
+    });
 
-function Section({children, title}: SectionProps): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-  return (
-    <View style={styles.sectionContainer}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          {
-            color: isDarkMode ? Colors.white : Colors.black,
-          },
-        ]}>
-        {title}
-      </Text>
-      <Text
-        style={[
-          styles.sectionDescription,
-          {
-            color: isDarkMode ? Colors.light : Colors.dark,
-          },
-        ]}>
-        {children}
-      </Text>
-    </View>
-  );
-}
+    // Load URL history from the database
+    loadUrlHistory();
+  }, []);
 
-function App(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
+  const loadUrlHistory = () => {
+    db.transaction(tx => {
+      tx.executeSql(
+        'SELECT url FROM url_history ORDER BY id DESC;',
+        [],
+        (tx, results) => {
+          let urls: string[] = [];
+          for (let i = 0; i < results.rows.length; i++) {
+            urls.push(results.rows.item(i).url);
+          }
+          setUrlHistory(urls);
+        },
+        error => console.log('Error loading URL history:', error)
+      );
+    });
+  };
 
-  const backgroundStyle = {
-    backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
+  const handlePress = (): void => {
+    if (url.trim() === '') {
+      Alert.alert('Invalid URL', 'Please enter a valid URL.');
+      return;
+    }
+    let formattedUrl = url.trim();
+    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+      formattedUrl = 'http://' + formattedUrl;
+    }
+    const newImageUrl = `${formattedUrl}?timestamp=${new Date().getTime()}`;
+    setImageUrl(newImageUrl); // Set the URL with a timestamp to bypass cache
+
+    // Save the URL to the history
+    db.transaction(tx => {
+      tx.executeSql(
+        'INSERT INTO url_history (url) VALUES (?);',
+        [formattedUrl],
+        () => console.log('URL saved to history'),
+        error => console.log('Error saving URL to history:', error)
+      );
+    });
+
+    setShowSuggestions(false); // Hide suggestions after selecting a URL
+    loadUrlHistory(); // Reload URL history after adding a new entry
+  };
+
+  const handleCloseImage = (): void => {
+    setImageUrl(null);
+    setURL('');
+  };
+
+  const handleURLChange = (text: string) => {
+    setURL(text);
+    setShowSuggestions(text.length > 0); // Show suggestions only when there's input
   };
 
   return (
-    <SafeAreaView style={backgroundStyle}>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={backgroundStyle.backgroundColor}
+    <SafeAreaView style={{ flex: 1, justifyContent: 'center', padding: 16 }}>
+      <Text style={{ fontSize: 18, marginBottom: 8 }}>Enter URL to fetch image:</Text>
+      <TextInput
+        style={{
+          height: 40,
+          borderColor: 'gray',
+          borderWidth: 1,
+          paddingHorizontal: 8,
+        }}
+        placeholder="Enter URL here"
+        onChangeText={handleURLChange}
+        value={url}
+        keyboardType="url"
+        autoCapitalize="none"
+        autoCorrect={false}
       />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={backgroundStyle}>
-        <Header />
-        <View
-          style={{
-            backgroundColor: isDarkMode ? Colors.black : Colors.white,
-          }}>
-          <Section title="Step One">
-            Edit <Text style={styles.highlight}>App.tsx</Text> to change this
-            screen and then come back to see your edits.
-          </Section>
-          <Section title="See Your Changes">
-            <ReloadInstructions />
-          </Section>
-          <Section title="Debug">
-            <DebugInstructions />
-          </Section>
-          <Section title="Learn More">
-            Read the docs to discover what to do next:
-          </Section>
-          <LearnMoreLinks />
+      {showSuggestions && (
+        <FlatList
+          data={urlHistory.filter(item => item.includes(url))}
+          renderItem={({ item }) => (
+            <TouchableOpacity onPress={() => setURL(item)}>
+              <Text style={{ padding: 8, borderBottomColor: 'gray', borderBottomWidth: 1 }}>{item}</Text>
+            </TouchableOpacity>
+          )}
+          keyExtractor={(item, index) => index.toString()}
+          style={{ maxHeight: 150, marginTop: 8, borderColor: 'gray', borderWidth: 1 }}
+        />
+      )}
+      <View style={{ marginTop: 16 }}>
+        <Button title="Open Image" onPress={handlePress} />
+      </View>
+      {imageUrl && (
+        <View>
+          <Image
+            source={{ uri: imageUrl, cache:'reload' }}
+            style={{
+              width: '100%',
+              height: 400,
+              marginTop: 20,
+              borderColor: 'black',
+              borderWidth: 3,
+            }}
+            resizeMode="contain"
+            onError={() => {
+              Alert.alert('Error', 'Failed to load image.');
+              setImageUrl(null); // Reset the image URL if loading fails
+            }}
+          />
+          <View style={{ marginTop: 16 }}>
+            <Button title="Close Image" onPress={handleCloseImage} />
+          </View>
         </View>
-      </ScrollView>
+      )}
     </SafeAreaView>
   );
-}
+};
 
-const styles = StyleSheet.create({
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
-  },
-  highlight: {
-    fontWeight: '700',
-  },
-});
-
-export default App;
+export default ImageFetch;
